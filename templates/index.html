@@ -653,7 +653,7 @@
             try {
                 // 1) Create async task
                 const { data } = await uploadWithProgress(`${BASE_PATH}/api/transcribe_async`, fd, (pct) => {
-                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使使显示100%也请稍等）`);
+                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使显示100%也请稍等）`);
                 });
 
                 const taskId = data.task_id;
