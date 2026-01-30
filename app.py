@@ -43,16 +43,80 @@ DEVICE = _env("WHISPER_DEVICE", "cuda")
 COMPUTE_TYPE = _env("WHISPER_COMPUTE_TYPE", "float16")
 LAST_TASK_COOKIE = _env("APP_LAST_TASK_COOKIE", "whisper_last_task")
 
+# 空闲多久后自动释放模型（秒）。0 表示禁用。
+MODEL_IDLE_UNLOAD_SECONDS = int(_env("WHISPER_MODEL_IDLE_UNLOAD_SECONDS", "1800"))
+
 app = FastAPI(title="Faster-Whisper Web Demo")
 
 _model: Optional[WhisperModel] = None
+_model_lock = threading.Lock()
+_model_last_used_at = 0.0
+
+
+def _touch_model_last_used() -> None:
+    global _model_last_used_at
+    _model_last_used_at = time.time()
+
+
+def _try_unload_model_if_idle(now: float) -> bool:
+    """空闲超过阈值时卸载模型，释放显存；返回是否发生卸载。"""
+    global _model
+    if MODEL_IDLE_UNLOAD_SECONDS <= 0:
+        return False
+
+    with _model_lock:
+        if _model is None:
+            return False
+
+        idle = now - float(_model_last_used_at or 0.0)
+        if idle < MODEL_IDLE_UNLOAD_SECONDS:
+            return False
+
+        # Drop reference; memory will be released when GC runs.
+        _model = None
+
+    # Best-effort CUDA cache cleanup.
+    try:
+        if str(DEVICE).lower().startswith("cuda"):
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                # Some builds may not have ipc_collect; keep it best-effort.
+                try:
+                    torch.cuda.ipc_collect()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return True
+
+
+def _start_model_reaper_thread() -> None:
+    if MODEL_IDLE_UNLOAD_SECONDS <= 0:
+        return
+
+    def _reaper():
+        interval = max(15, min(60, MODEL_IDLE_UNLOAD_SECONDS // 3))
+        while True:
+            time.sleep(interval)
+            _try_unload_model_if_idle(time.time())
+
+    threading.Thread(target=_reaper, daemon=True, name="whisper-model-reaper").start()
 
 
 def get_model() -> WhisperModel:
     global _model
-    if _model is None:
-        _model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-    return _model
+    with _model_lock:
+        if _model is None:
+            _model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+        _touch_model_last_used()
+        return _model
+
+
+# Start background model reaper (idle unload).
+_start_model_reaper_thread()
 
 
 def _fmt_time(sec: float) -> str:
@@ -70,17 +134,10 @@ def transcribe_file(
 ) -> dict:
 
     model = get_model()
+    _touch_model_last_used()
 
     segments, info = model.transcribe(audio_path, beam_size=beam_size)
-    print(
-        "Detected language '%s' with probability %f, duration %.2f sec, after VAD %.2f sec"
-        % (
-            info.language,
-            info.language_probability,
-            info.duration,
-            info.duration_after_vad,
-        )
-    )
+
     plain_parts = []
     verbose_lines = []
 
@@ -103,6 +160,7 @@ def transcribe_file(
         )
 
     for s in segments:
+        _touch_model_last_used()
         if task_id:
             st = progress_get_task(task_id)
             if st is not None and getattr(st, "canceled", False):
