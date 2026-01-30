@@ -259,6 +259,26 @@
             flex: 0 0 auto;
         }
 
+        .promptItem {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 0;
+        }
+
+        .promptItem + .promptItem {
+            border-top: 1px dashed var(--border);
+        }
+
+        .promptText {
+            margin: 0;
+            flex: 1;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.55;
+        }
+
         .promptToggle {
             padding: 6px 10px;
             border-radius: 10px;
@@ -339,12 +359,20 @@
                     <p style="margin: 0; font-weight: 600; flex: 1;">建议转写后用大模型整理（加标点、修正错字等），Prompt 示例：</p>
                     <div class="promptActions">
                         <button id="promptToggle" type="button" class="secondary promptToggle">收起</button>
-                        <button id="copyPrompt" type="button" class="secondary copyBtn">复制</button>
-                        </div>
+                    </div>
                 </div>
-                <pre id="promptBody" class="muted">
-这是一段由录音转成的文字稿，涉及(学科)(领域)，将其整理成通顺的中文，修改错别字，根据涉及的学科领域合理推测专有名词，并加上标点：
-                </pre>
+                <div id="promptBody" class="muted">
+                    <div class="promptItem">
+                        <pre id="promptBody1"
+                            class="promptText">这是一段由录音转成的文字稿，涉及(学科)(领域)，将其整理成通顺的中文，修改错别字，根据涉及的学科领域合理推测专有名词，并完善标点：</pre>
+                        <button id="copyPrompt1" type="button" class="secondary copyBtn">复制</button>
+                    </div>
+                    <div class="promptItem">
+                        <pre id="promptBody2"
+                            class="promptText">这是一段由录音转成的文字稿，涉及(学科)(领域)，将其完整整理成通顺的中文，不要精简删改句子，只修改错别字，根据涉及的学科领域合理推测专有名词，并完善标点：</pre>
+                        <button id="copyPrompt2" type="button" class="secondary copyBtn">复制</button>
+                    </div>
+                </div>
             </div>
 
             <div class="sectionHead">
@@ -414,9 +442,43 @@
                                         });
                                     }
 
-                                    bindCopy('copyPrompt', () => $('promptBody')?.textContent);
+                                        bindCopy('copyPrompt1', () => $('promptBody1')?.textContent);
+                                        bindCopy('copyPrompt2', () => $('promptBody2')?.textContent);
                                     bindCopy('copyText', () => $('text')?.value);
                                     bindCopy('copySegments', () => $('segments')?.textContent);
+
+
+    function uploadWithProgress(url, formData, onProgress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            xhr.responseType = 'json';
+
+            xhr.upload.onprogress = (evt) => {
+                if (!evt.lengthComputable) return;
+                const pct = Math.round((evt.loaded / evt.total) * 100);
+                onProgress?.(pct);
+            };
+
+            xhr.onload = () => {
+                // Handle auth redirect/401
+                if (xhr.status === 401) {
+                    reject({ kind: 'auth', status: 401 });
+                    return;
+                }
+                const data = xhr.response || {};
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve({ status: xhr.status, data });
+                    return;
+                }
+                reject({ kind: 'http', status: xhr.status, data });
+            };
+
+            xhr.onerror = () => reject({ kind: 'network' });
+            xhr.onabort = () => reject({ kind: 'abort' });
+            xhr.send(formData);
+        });
+    }
 
         // Prompt 示例默认在转写前就展示；允许用户手动收起/展开。
         (function initPromptCard() {
@@ -586,20 +648,13 @@
             $('btn').disabled = true;
             setBusy(true, '');
             $('status').textContent = '上传中…';
-            setProgress(1, '上传中…');
+            setProgress(0, '上传中… 0%');
 
             try {
                 // 1) Create async task
-                const resp = await fetch(`${BASE_PATH}/api/transcribe_async`, { method: 'POST', body: fd });
-                const data = await resp.json();
-                if (resp.status === 401) {
-                    location.href = `${BASE_PATH}/login`;
-                    return;
-                }
-                if (!resp.ok) {
-                    $('error').textContent = data.error || ('请求失败，HTTP ' + resp.status);
-                    return;
-                }
+                const { data } = await uploadWithProgress(`${BASE_PATH}/api/transcribe_async`, fd, (pct) => {
+                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使使显示100%也请稍等）`);
+                });
 
                 const taskId = data.task_id;
                 if (!taskId) {
@@ -607,13 +662,25 @@
                     return;
                 }
 
+                // Ensure upload reaches 100% before switching to transcribe progress
+                setProgress(100, '上传完成，准备转写…');
+
                 // Save for refresh restore
                 localStorage.setItem('whisper_last_task', taskId);
 
                 // 2) Poll progress
                 await pollTask(taskId);
             } catch (e) {
-                $('error').textContent = String(e);
+                if (e && e.kind === 'auth') {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (e && e.kind === 'http') {
+                    const msg = (e.data && (e.data.error || e.data.detail)) || ('请求失败，HTTP ' + e.status);
+                    $('error').textContent = msg;
+                    return;
+                }
+                $('error').textContent = '上传失败：' + String(e?.kind || e);
             } finally {
                 // pollTask will re-enable when done/error; but ensure not stuck if upload failed early
                 if ($('cancel').dataset.taskId === '') {

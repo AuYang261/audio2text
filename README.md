@@ -158,6 +158,14 @@ location ^~ /audio2text/ {
   - 多半是后端重定向写死 `/login` 或未设置 `--root-path /audio2text`
   - 本项目已修复重定向，并建议始终使用 `--root-path /audio2text`
 
+- 上传时报 `413 Content Too Large`：
+  - 这是 Nginx/宝塔限制了上传体积（不是 FastAPI 报错）
+  - 在对应 `location` 或 `server` 中增大限制，例如：
+
+```nginx
+client_max_body_size 1024m;
+```
+
 ## 文件结构
 
 - `app.py`: FastAPI 后端
