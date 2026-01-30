@@ -1,0 +1,7 @@
+*.txt
+*.log
+*.pid
+__pycache__/
+env/
+frpc*
+run_web_with_env.sh

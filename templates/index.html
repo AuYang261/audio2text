@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Faster-Whisper 语音转文字</title>
+    <style>
+        :root {
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --ring: rgba(59, 130, 246, .25);
+            --primary: #111827;
+            --danger: #b91c1c;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            margin: 0;
+            background: radial-gradient(1200px 600px at 20% -10%, #e0f2fe 0%, rgba(224, 242, 254, 0) 60%),
+                radial-gradient(1200px 600px at 80% -20%, #ede9fe 0%, rgba(237, 233, 254, 0) 55%),
+                var(--bg);
+            color: var(--text);
+            line-height: 1.55;
+        }
+
+        .container {
+            max-width: 980px;
+            margin: 44px auto;
+            padding: 0 18px;
+        }
+
+        .header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 16px;
+        }
+
+        .title {
+            margin: 0;
+            font-size: 28px;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 10px 30px rgba(2, 6, 23, .06);
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1.4fr .6fr auto auto;
+            gap: 14px;
+            align-items: end;
+        }
+
+        @media (max-width: 820px) {
+            .controls {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (max-width: 520px) {
+            .controls {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .field label {
+            display: block;
+        }
+
+        label {
+            font-weight: 600;
+        }
+
+        .help {
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        input[type="file"],
+        input[type="number"] {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #fff;
+            outline: none;
+        }
+
+        input[type="file"]:focus,
+        input[type="number"]:focus {
+            border-color: #93c5fd;
+            box-shadow: 0 0 0 4px var(--ring);
+        }
+
+        button {
+            padding: 11px 14px;
+            border: 0;
+            border-radius: 12px;
+            background: var(--primary);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            letter-spacing: .01em;
+            white-space: nowrap;
+        }
+
+        button.secondary {
+            background: #0f172a;
+        }
+
+        button.danger {
+            background: var(--danger);
+        }
+
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 130px;
+            padding: 12px;
+            box-sizing: border-box;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background: #fff;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .err {
+            color: var(--danger);
+        }
+
+        .statusRow {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: #f8fafc;
+        }
+
+        progress {
+            width: 100%;
+            height: 16px;
+            margin-top: 8px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .sectionTitle {
+            margin: 20px 0 10px;
+            font-size: 16px;
+        }
+
+        .prompt {
+            border: 1px dashed var(--border);
+            border-radius: 14px;
+            padding: 12px;
+            background: #fcfcfd;
+        }
+
+        .promptHeader {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 0 0 8px;
+        }
+
+        .promptToggle {
+            padding: 6px 10px;
+            border-radius: 10px;
+            background: #0f172a;
+            font-size: 12px;
+        }
+
+        pre {
+            margin: 0;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1 class="title">Faster-Whisper 语音转文字</h1>
+                <p class="subtitle">由 <a href="https://github.com/SYSTRAN/faster-whisper"
+                        target="_blank">Faster-Whisper</a> 提供转写服务</p>
+            </div>
+        </div>
+        <div class="card">
+            <div class="controls">
+                <div class="field">
+                    <label>录音文件</label>
+                    <input id="file" type="file" accept="audio/*,video/*,.m4a,.mp3,.wav,.flac,.mp4" />
+                    <div class="help">支持 m4a / mp3 / wav / flac / mp4 等格式</div>
+                </div>
+
+                <div class="field">
+                    <label>beam_size</label>
+                    <input id="beam" type="number" min="1" max="20" value="5" />
+                    <div class="help">越大越精确，但也越慢</div>
+                </div>
+
+                <div class="field">
+                    <label>&nbsp;</label>
+                    <button id="btn">上传并转写</button>
+                    <div class="help">开始新的转写任务</div>
+                </div>
+
+                <div class="field">
+                    <label>&nbsp;</label>
+                    <button id="cancel" class="danger" disabled>终止当前转写</button>
+                    <div class="help">停止正在进行的任务</div>
+                </div>
+            </div>
+
+            <div class="statusRow">
+                <div id="meta_data" class="muted"></div>
+                <div id="status" class="muted"></div>
+                <progress id="progress" value="0" max="100" class="hidden"></progress>
+                <div id="error" class="err"></div>
+            </div>
+
+            <div class="prompt" id="promptCard" style="margin-top: 14px;">
+                <div class="promptHeader">
+                    <p style="margin: 0; font-weight: 600;">建议转写后用大模型整理（加标点、修正错字等），Prompt 示例：</p>
+                    <button id="promptToggle" type="button" class="secondary promptToggle">收起</button>
+                </div>
+                <pre id="promptBody" class="muted">
+这是一段由录音转成的文字稿，涉及(学科)(领域)，将其整理成通顺的中文，修改错别字，根据涉及的学科领域合理推测专有名词，并加上标点：
+                </pre>
+            </div>
+
+            <h3 class="sectionTitle">转写文本</h3>
+            <textarea id="text" readonly placeholder="这里会显示转写结果..."></textarea>
+
+            <h3 class="sectionTitle">分段结果（带时间戳）</h3>
+            <div class="prompt" style="background: #fff;">
+                <pre id="segments" class="muted"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const SERVER_LAST_TASK = "{{ last_task_id | default('') }}";
+        const BASE_PATH = "{{ request.scope.get('root_path','') }}";
+
+        // Prompt 示例默认在转写前就展示；允许用户手动收起/展开。
+        (function initPromptCard() {
+            const toggle = $('promptToggle');
+            const body = $('promptBody');
+            if (!toggle || !body) return;
+
+            const KEY = 'whisper_prompt_collapsed';
+            const apply = (collapsed) => {
+                body.classList.toggle('hidden', !!collapsed);
+                toggle.textContent = collapsed ? '展开' : '收起';
+            };
+
+            const collapsed = localStorage.getItem(KEY) === '1';
+            apply(collapsed);
+
+            toggle.addEventListener('click', () => {
+                const now = !body.classList.contains('hidden');
+                const next = now; // if currently visible, collapse
+                localStorage.setItem(KEY, next ? '1' : '0');
+                apply(next);
+            });
+        })();
+
+        async function sleep(ms) {
+            return new Promise((r) => setTimeout(r, ms));
+        }
+
+        function setProgress(pct, msg) {
+            const bar = $('progress');
+            bar.classList.remove('hidden');
+            bar.value = Math.max(0, Math.min(100, pct));
+            if (msg) {
+                $('status').textContent = msg;
+            }
+        }
+
+        function setMetaLine(meta = {}) {
+            const language = meta.language || '识别中…';
+            const p = (meta.language_probability ?? null);
+            const duration = (meta.duration ?? null);
+            const durationAfterVad = (meta.duration_after_vad ?? null);
+
+            const pText = (p === null || Number.isNaN(Number(p))) ? '--' : Number(p).toFixed(3);
+            const dText = (duration === null || Number.isNaN(Number(duration))) ? '--' : Number(duration).toFixed(2) + 's';
+            // 转为时:分:秒格式
+            const hours = Math.floor(duration / 3600);
+            const minutes = Math.floor((duration % 3600) / 60);
+            const seconds = Math.floor(duration % 60);
+            const dTextFormatted = hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : (
+                minutes > 0 ? `${minutes}m ${seconds}s` :
+                    `${seconds}s`);
+            const vadText = (durationAfterVad === null || Number.isNaN(Number(durationAfterVad))) ? '--' : Number(durationAfterVad).toFixed(2) + 's';
+
+            $('meta_data').textContent = `识别语言：${language} (p=${pText})，时长：${dTextFormatted}`;
+        }
+
+        function setBusy(isBusy, taskId = '') {
+            $('btn').disabled = !!isBusy;
+            $('cancel').disabled = !isBusy || !taskId;
+            $('cancel').dataset.taskId = taskId || '';
+        }
+
+        async function pollTask(taskId) {
+            if (!taskId) return;
+            setBusy(true, taskId);
+
+            // 让“识别语言：…”这行在转写开始就出现（先占位，完成后填真实值）。
+            setMetaLine({});
+
+            while (true) {
+                await sleep(600);
+                const stResp = await fetch(`${BASE_PATH}/api/task/${taskId}`);
+                const st = await stResp.json();
+                if (stResp.status === 401) {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (!stResp.ok) {
+                    // task might have expired; stop polling
+                    $('status').textContent = '';
+                    setBusy(false, '');
+                    return;
+                }
+
+                const pct = Math.round((st.progress || 0) * 100);
+                setProgress(pct, `转写中… ${pct}%`);
+
+                // 后端可能会在 running 阶段就写入 language 等 meta，及时刷新这一行。
+                if (st.result) {
+                    setMetaLine(st.result);
+                }
+
+                if (st.status === 'done') {
+                    const r = st.result || {};
+                    $('progress').value = 100;
+                    setMetaLine(r);
+                    $('text').value = r.text || '';
+                    $('segments').textContent = (r.segments || []).join('\n');
+                    setBusy(false, '');
+                    break;
+                }
+
+                if (st.status === 'error') {
+                    $('error').textContent = st.message || '转写失败';
+                    setBusy(false, '');
+                    break;
+                }
+            }
+        }
+
+        // Restore last transcription after refresh.
+        (async () => {
+            const localTask = localStorage.getItem('whisper_last_task') || '';
+            const taskId = localTask || SERVER_LAST_TASK;
+            if (!taskId) return;
+            $('error').textContent = '';
+            $('status').textContent = '正在恢复上一次转写结果…';
+            $('progress').classList.remove('hidden');
+            $('progress').value = 0;
+            setBusy(true, taskId);
+            await pollTask(taskId);
+        })();
+
+        $('cancel').addEventListener('click', async () => {
+            const taskId = $('cancel').dataset.taskId;
+            if (!taskId) return;
+            $('error').textContent = '';
+            try {
+                const resp = await fetch(`${BASE_PATH}/api/task/${taskId}/cancel`, { method: 'POST' });
+                const data = await resp.json();
+                if (resp.status === 401) {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (!resp.ok) {
+                    $('error').textContent = data.error || ('终止失败，HTTP ' + resp.status);
+                    return;
+                }
+                $('status').textContent = '已请求终止，稍等片刻…';
+            } catch (e) {
+                $('error').textContent = String(e);
+            }
+        });
+
+        $('btn').addEventListener('click', async () => {
+            $('error').textContent = '';
+            $('status').textContent = '';
+            $('text').value = '';
+            $('segments').textContent = '';
+            $('progress').classList.add('hidden');
+            $('progress').value = 0;
+
+            const f = $('file').files[0];
+            if (!f) {
+                $('error').textContent = '请先选择一个音频/视频文件。';
+                return;
+            }
+
+            const beam = parseInt($('beam').value || '5', 10);
+
+            const fd = new FormData();
+            fd.append('file', f);
+            fd.append('beam_size', String(beam));
+
+            $('btn').disabled = true;
+            setBusy(true, '');
+            $('status').textContent = '上传中…';
+            setProgress(1, '上传中…');
+
+            try {
+                // 1) Create async task
+                const resp = await fetch(`${BASE_PATH}/api/transcribe_async`, { method: 'POST', body: fd });
+                const data = await resp.json();
+                if (resp.status === 401) {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (!resp.ok) {
+                    $('error').textContent = data.error || ('请求失败，HTTP ' + resp.status);
+                    return;
+                }
+
+                const taskId = data.task_id;
+                if (!taskId) {
+                    $('error').textContent = '未获取到任务ID';
+                    return;
+                }
+
+                // Save for refresh restore
+                localStorage.setItem('whisper_last_task', taskId);
+
+                // 2) Poll progress
+                await pollTask(taskId);
+            } catch (e) {
+                $('error').textContent = String(e);
+            } finally {
+                // pollTask will re-enable when done/error; but ensure not stuck if upload failed early
+                if ($('cancel').dataset.taskId === '') {
+                    setBusy(false, '');
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

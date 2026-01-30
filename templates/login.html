@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录 - Faster-Whisper</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+            margin: 40px auto;
+            max-width: 520px;
+            line-height: 1.5;
+        }
+
+        .card {
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 18px;
+        }
+
+        label {
+            font-weight: 600;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+        }
+
+        button {
+            padding: 10px 14px;
+            border: 0;
+            border-radius: 10px;
+            background: #111827;
+            color: #fff;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .muted {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .err {
+            color: #b91c1c;
+        }
+
+        .row {
+            margin-top: 12px;
+        }
+
+    </style>
+</head>
+
+<body>
+    <h1>登录</h1>
+    <p class="muted">请输入用户名和密码后才能访问转写页面。</p>
+
+    <div class="card">
+        <div class="row">
+            <label>用户名</label>
+            <input id="username" autocomplete="username" placeholder="用户名" />
+        </div>
+        <div class="row">
+            <label>密码</label>
+            <input id="password" type="password" autocomplete="current-password" placeholder="密码" />
+        </div>
+        <div class="row">
+            <button id="btn">登录</button>
+        </div>
+        <p id="error" class="err"></p>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const BASE_PATH = "{{ request.scope.get('root_path','') }}";
+
+        $('btn').addEventListener('click', async () => {
+            $('error').textContent = '';
+            const username = $('username').value.trim();
+            const password = $('password').value;
+            if (!username || !password) {
+                $('error').textContent = '请输入用户名和密码。';
+                return;
+            }
+
+            $('btn').disabled = true;
+            try {
+                const resp = await fetch(`${BASE_PATH}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    $('error').textContent = data.error || ('登录失败，HTTP ' + resp.status);
+                    return;
+                }
+                location.href = `${BASE_PATH}/`;
+            } catch (e) {
+                $('error').textContent = String(e);
+            } finally {
+                $('btn').disabled = false;
+            }
+        });
+    </script>
+</body>
+
+</html>
