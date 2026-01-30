@@ -41,6 +41,40 @@
             margin-bottom: 16px;
         }
 
+        .headerRight {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .iconLink {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, .7);
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .iconLink:hover {
+            background: #fff;
+            border-color: #cbd5e1;
+        }
+
+        .iconLink svg {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+        }
+
+        .iconLabel {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
         .title {
             margin: 0;
             font-size: 28px;
@@ -184,6 +218,25 @@
             font-size: 16px;
         }
 
+        .sectionHead {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 20px 0 10px;
+        }
+
+        .sectionHead .sectionTitle {
+            margin: 0;
+        }
+
+        .copyBtn {
+            padding: 7px 10px;
+            border-radius: 10px;
+            background: #0f172a;
+            font-size: 12px;
+        }
+
         .prompt {
             border: 1px dashed var(--border);
             border-radius: 14px;
@@ -199,11 +252,26 @@
             margin: 0 0 8px;
         }
 
+        .promptActions {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+
         .promptToggle {
             padding: 6px 10px;
             border-radius: 10px;
             background: #0f172a;
             font-size: 12px;
+        }
+
+        /* Make small action buttons look consistent */
+        .promptToggle,
+        .copyBtn {
+            padding: 7px 10px;
+            border-radius: 999px;
+            line-height: 1;
         }
 
         pre {
@@ -217,9 +285,19 @@
     <div class="container">
         <div class="header">
             <div>
-                <h1 class="title">Faster-Whisper 语音转文字</h1>
+                <h1 class="title">语音转文字</h1>
                 <p class="subtitle">由 <a href="https://github.com/SYSTRAN/faster-whisper"
                         target="_blank">Faster-Whisper</a> 提供转写服务</p>
+            </div>
+            <div class="headerRight">
+                <a class="iconLink" href="https://github.com/AuYang261/audio2text" target="_blank" rel="noopener noreferrer"
+                    title="GitHub">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path fill="currentColor"
+                            d="M12 .5C5.73.5.65 5.64.65 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.2c-3.2.71-3.88-1.55-3.88-1.55-.53-1.36-1.29-1.72-1.29-1.72-1.05-.73.08-.72.08-.72 1.16.08 1.78 1.2 1.78 1.2 1.03 1.79 2.7 1.27 3.36.97.1-.76.4-1.27.73-1.56-2.55-.29-5.23-1.29-5.23-5.75 0-1.27.45-2.31 1.19-3.13-.12-.3-.52-1.52.11-3.17 0 0 .98-.32 3.2 1.2.93-.26 1.93-.39 2.92-.4.99 0 1.99.14 2.92.4 2.22-1.52 3.2-1.2 3.2-1.2.63 1.65.23 2.87.11 3.17.74.82 1.19 1.86 1.19 3.13 0 4.47-2.68 5.45-5.24 5.74.41.36.78 1.08.78 2.18v3.24c0 .31.21.67.8.56 4.57-1.52 7.86-5.83 7.86-10.91C23.35 5.64 18.27.5 12 .5z" />
+                    </svg>
+                    <span class="iconLabel">GitHub</span>
+                </a>
             </div>
         </div>
         <div class="card">
@@ -258,18 +336,27 @@
 
             <div class="prompt" id="promptCard" style="margin-top: 14px;">
                 <div class="promptHeader">
-                    <p style="margin: 0; font-weight: 600;">建议转写后用大模型整理（加标点、修正错字等），Prompt 示例：</p>
-                    <button id="promptToggle" type="button" class="secondary promptToggle">收起</button>
+                    <p style="margin: 0; font-weight: 600; flex: 1;">建议转写后用大模型整理（加标点、修正错字等），Prompt 示例：</p>
+                    <div class="promptActions">
+                        <button id="promptToggle" type="button" class="secondary promptToggle">收起</button>
+                        <button id="copyPrompt" type="button" class="secondary copyBtn">复制</button>
+                        </div>
                 </div>
                 <pre id="promptBody" class="muted">
 这是一段由录音转成的文字稿，涉及(学科)(领域)，将其整理成通顺的中文，修改错别字，根据涉及的学科领域合理推测专有名词，并加上标点：
                 </pre>
             </div>
 
-            <h3 class="sectionTitle">转写文本</h3>
+            <div class="sectionHead">
+                <h3 class="sectionTitle">转写文本</h3>
+                <button id="copyText" type="button" class="secondary copyBtn">复制</button>
+                </div>
             <textarea id="text" readonly placeholder="这里会显示转写结果..."></textarea>
 
-            <h3 class="sectionTitle">分段结果（带时间戳）</h3>
+            <div class="sectionHead">
+                <h3 class="sectionTitle">分段结果（带时间戳）</h3>
+                <button id="copySegments" type="button" class="secondary copyBtn">复制</button>
+                </div>
             <div class="prompt" style="background: #fff;">
                 <pre id="segments" class="muted"></pre>
             </div>
@@ -280,6 +367,56 @@
         const $ = (id) => document.getElementById(id);
         const SERVER_LAST_TASK = "{{ last_task_id | default('') }}";
         const BASE_PATH = "{{ request.scope.get('root_path','') }}";
+
+                                    async function copyToClipboard(text) {
+                                        // Prefer modern Clipboard API
+                                        if (navigator.clipboard && window.isSecureContext) {
+                                            await navigator.clipboard.writeText(text);
+                                            return;
+                                        }
+                                        // Fallback
+                                        const ta = document.createElement('textarea');
+                                        ta.value = text;
+                                        ta.setAttribute('readonly', '');
+                                        ta.style.position = 'fixed';
+                                        ta.style.left = '-9999px';
+                                        document.body.appendChild(ta);
+                                        ta.select();
+                                        document.execCommand('copy');
+                                        document.body.removeChild(ta);
+                                    }
+
+                                    function flashCopy(btn, ok, msg) {
+                                        const old = btn.textContent;
+                                        btn.textContent = msg || (ok ? '已复制' : '复制失败');
+                                        btn.disabled = true;
+                                        setTimeout(() => {
+                                            btn.textContent = old;
+                                            btn.disabled = false;
+                                        }, 900);
+                                    }
+
+                                    function bindCopy(buttonId, getText) {
+                                        const btn = $(buttonId);
+                                        if (!btn) return;
+                                        btn.addEventListener('click', async () => {
+                                            const t = (getText() || '').trim();
+                                            if (!t) {
+                                                flashCopy(btn, false, '无内容');
+                                                return;
+                                            }
+                                            try {
+                                                await copyToClipboard(t);
+                                                flashCopy(btn, true, '已复制');
+                                            } catch (e) {
+                                                flashCopy(btn, false, '复制失败');
+                                            }
+                                        });
+                                    }
+
+                                    bindCopy('copyPrompt', () => $('promptBody')?.textContent);
+                                    bindCopy('copyText', () => $('text')?.value);
+                                    bindCopy('copySegments', () => $('segments')?.textContent);
 
         // Prompt 示例默认在转写前就展示；允许用户手动收起/展开。
         (function initPromptCard() {
@@ -428,6 +565,7 @@
         $('btn').addEventListener('click', async () => {
             $('error').textContent = '';
             $('status').textContent = '';
+            $('meta_data').textContent = '';
             $('text').value = '';
             $('segments').textContent = '';
             $('progress').classList.add('hidden');
