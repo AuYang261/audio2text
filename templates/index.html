@@ -97,14 +97,14 @@
 
         .controls {
             display: grid;
-            grid-template-columns: 1.4fr .6fr auto auto;
+            grid-template-columns: 1.2fr .5fr .5fr auto auto;
             gap: 14px;
             align-items: end;
         }
 
         @media (max-width: 820px) {
             .controls {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: 1fr 1fr 1fr;
             }
         }
 
@@ -126,6 +126,25 @@
             margin-top: 6px;
             color: var(--muted);
             font-size: 12px;
+        }
+
+        select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #fff;
+            outline: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+
+        select:focus {
+            border-color: #93c5fd;
+            box-shadow: 0 0 0 4px var(--ring);
         }
 
         input[type="file"],
@@ -326,6 +345,16 @@
                     <label>录音文件</label>
                     <input id="file" type="file" accept="audio/*,video/*,.m4a,.mp3,.wav,.flac,.mp4" />
                     <div class="help">支持 m4a / mp3 / wav / flac / mp4 等格式</div>
+                </div>
+
+                <div class="field">
+                    <label>识别语言</label>
+                    <select id="language">
+                        <option value="zh">中文</option>
+                        <option value="en">英文</option>
+                        <option value="">自动检测</option>
+                    </select>
+                    <div class="help">指定语言可提升准确率</div>
                 </div>
 
                 <div class="field">
@@ -640,10 +669,12 @@
             }
 
             const beam = parseInt($('beam').value || '5', 10);
+            const language = $('language').value;
 
             const fd = new FormData();
             fd.append('file', f);
             fd.append('beam_size', String(beam));
+            fd.append('language', language);
 
             $('btn').disabled = true;
             setBusy(true, '');

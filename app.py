@@ -48,6 +48,31 @@ MODEL_IDLE_UNLOAD_SECONDS = int(_env("WHISPER_MODEL_IDLE_UNLOAD_SECONDS", "1800"
 
 app = FastAPI(title="Faster-Whisper Web Demo")
 
+
+class _StripPrefixMiddleware:
+    """Allow the app to be accessed with or without the /audio2text URL prefix.
+
+    - LAN direct:  GET /           → path stays /,        root_path = ""
+    - Cloud proxy: GET /audio2text → path becomes /,      root_path = /audio2text
+    This lets FastAPI generate correct redirect URLs in both environments.
+    """
+
+    _PREFIX = "/audio2text"
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            p: str = scope.get("path", "/")
+            if p == self._PREFIX or p.startswith(self._PREFIX + "/"):
+                new_path = p[len(self._PREFIX):] or "/"
+                scope = dict(scope)
+                scope["path"] = new_path
+                scope["raw_path"] = new_path.encode("latin-1")
+                scope["root_path"] = scope.get("root_path", "") + self._PREFIX
+        await self._inner(scope, receive, send)
+
 _model: Optional[WhisperModel] = None
 _model_lock = threading.Lock()
 _model_last_used_at = 0.0
@@ -130,13 +155,14 @@ def _fmt_time(sec: float) -> str:
 def transcribe_file(
     audio_path: str,
     beam_size: int = 5,
+    language: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> dict:
 
     model = get_model()
     _touch_model_last_used()
 
-    segments, info = model.transcribe(audio_path, beam_size=beam_size)
+    segments, info = model.transcribe(audio_path, beam_size=beam_size, language=language or None)
 
     plain_parts = []
     verbose_lines = []
@@ -229,6 +255,7 @@ async def api_transcribe_async(
     request: Request,
     file: UploadFile = File(...),
     beam_size: int = Form(5),
+    language: str = Form(""),
 ):
     if not get_logged_in_user(request):
         return JSONResponse(status_code=401, content={"error": "未登录"})
@@ -251,7 +278,7 @@ async def api_transcribe_async(
                 st.task_id, status="running", progress=0.0, message="running"
             )
             result = transcribe_file(
-                str(out_path), beam_size=int(beam_size), task_id=st.task_id
+                str(out_path), beam_size=int(beam_size), language=language, task_id=st.task_id
             )
             progress_finish(st.task_id, result)
         except Exception as e:
@@ -351,6 +378,7 @@ async def api_transcribe(
     request: Request,
     file: UploadFile = File(...),
     beam_size: int = Form(5),
+    language: str = Form(""),
 ):
     # Protect API endpoint as well (not only the page).
     if not get_logged_in_user(request):
@@ -363,8 +391,12 @@ async def api_transcribe(
             shutil.copyfileobj(file.file, f)
 
         try:
-            result = transcribe_file(str(out_path), beam_size=int(beam_size))
+            result = transcribe_file(str(out_path), beam_size=int(beam_size), language=language)
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": str(e)})
 
     return result
+
+
+# Wrap after all routes so the FastAPI instance is fully configured first.
+app = _StripPrefixMiddleware(app)  # noqa: F811

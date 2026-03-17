@@ -1,7 +1,7 @@
 export APP_USERNAME=
 export APP_PASSWORD=
 export APP_SESSION_SECRET=""
-nohup uvicorn app:app --host 127.0.0.1 --port 8000 --root-path /audio2text > output.log 2>&1 &
+nohup uvicorn app:app --host 0.0.0.0 --port 8000 > output.log 2>&1 &
 echo $! > uvicorn.pid
 nohup ./frpc -c ./frpc_web.toml > frpc_web.log 2>&1 &
 echo $! > frpc_web.pid
