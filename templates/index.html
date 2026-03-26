@@ -313,6 +313,107 @@
             line-height: 1;
         }
 
+        .promptRow {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .tag-input-box {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            min-height: 44px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #fff;
+            cursor: text;
+            box-sizing: border-box;
+        }
+
+        .tag-input-box:focus-within {
+            border-color: #93c5fd;
+            box-shadow: 0 0 0 4px var(--ring);
+        }
+
+        .tag-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px 3px 10px;
+            border-radius: 999px;
+            background: #1e293b;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .tag-item button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: rgba(255,255,255,.25);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            flex: 0 0 auto;
+        }
+
+        .tag-item button:hover {
+            background: rgba(255,255,255,.45);
+        }
+
+        .tag-input-inner {
+            flex: 1;
+            min-width: 120px;
+            border: none;
+            outline: none;
+            font-size: 13px;
+            font-family: inherit;
+            background: transparent;
+            padding: 2px 2px;
+        }
+
+        .presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .preset-chip {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: #f1f5f9;
+            color: var(--text);
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        .preset-chip:hover {
+            background: #e2e8f0;
+            border-color: #cbd5e1;
+        }
+
+        .preset-chip.active {
+            background: #1e293b;
+            color: #fff;
+            border-color: #1e293b;
+        }
+
         pre {
             margin: 0;
         }
@@ -376,6 +477,24 @@
                 </div>
             </div>
 
+            <div class="promptRow">
+                <div style="flex:1">
+                    <label style="font-size:13px;">领域关键词 <span style="font-weight:400;color:var(--muted)">（提升专业术语识别准确率）</span></label>
+                    <div id="tag-input-box" class="tag-input-box" onclick="document.getElementById('tag-input-inner').focus()">
+                        <input id="tag-input-inner" class="tag-input-inner" type="text"
+                            placeholder="输入后按回车添加关键词…" autocomplete="off" />
+                    </div>
+                    <div class="presets">
+                        <button type="button" class="preset-chip" data-preset="">无</button>
+                        <button type="button" class="preset-chip" data-preset="计算机, 操作系统, 编译器, 算法, 数据结构, CPU, 内存, 缓存">计算机基础</button>
+                        <button type="button" class="preset-chip" data-preset="人工智能, 机器学习, 深度学习, 神经网络, Transformer, GPU, CUDA, 模型训练, 推理">AI / 机器学习</button>
+                        <button type="button" class="preset-chip" data-preset="计算机网络, TCP, UDP, HTTP, HTTPS, DNS, 路由, 交换机, 防火墙, 带宽, 延迟">计算机网络</button>
+                        <button type="button" class="preset-chip" data-preset="RDMA, InfiniBand, RoCE, DPDK, 高性能网络, 零拷贝, 内核旁路, MPI, 集合通信, AllReduce">RDMA / HPC</button>
+                        <button type="button" class="preset-chip" data-preset="分布式系统, 微服务, Kubernetes, Docker, 容器, 云计算, 数据库, 事务, 一致性">云原生 / 分布式</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="statusRow">
                 <div id="meta_data" class="muted"></div>
                 <div id="status" class="muted"></div>
@@ -422,6 +541,95 @@
 
     <script>
         const $ = (id) => document.getElementById(id);
+
+        // ── Tag input ──────────────────────────────────────────────────
+        const TAG_KEY = 'whisper_keywords_v2';
+        const tagBox = $('tag-input-box');
+        const tagInner = $('tag-input-inner');
+        let _tags = [];
+
+        function saveTags() {
+            localStorage.setItem(TAG_KEY, JSON.stringify(_tags));
+        }
+
+        function renderTags() {
+            // Remove existing tag elements (keep the input)
+            tagBox.querySelectorAll('.tag-item').forEach(el => el.remove());
+            _tags.forEach((t, i) => {
+                const el = document.createElement('span');
+                el.className = 'tag-item';
+                el.textContent = t;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = '×';
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _tags.splice(i, 1);
+                    saveTags();
+                    renderTags();
+                    syncPresetHighlight();
+                });
+                el.appendChild(btn);
+                tagBox.insertBefore(el, tagInner);
+            });
+            tagInner.placeholder = _tags.length ? '' : '输入后按回车添加关键词…';
+        }
+
+        function setTags(arr) {
+            _tags = arr.filter(t => t.trim());
+            saveTags();
+            renderTags();
+        }
+
+        function getInitialPrompt() {
+            return _tags.join(', ');
+        }
+
+        function syncPresetHighlight() {
+            const cur = getInitialPrompt();
+            document.querySelectorAll('.preset-chip').forEach(c => {
+                c.classList.toggle('active', c.dataset.preset === cur);
+            });
+        }
+
+        // Restore from localStorage
+        try {
+            const saved = JSON.parse(localStorage.getItem(TAG_KEY) || '[]');
+            if (Array.isArray(saved)) setTags(saved);
+        } catch (_) {}
+        syncPresetHighlight();
+        if (!_tags.length) {
+            document.querySelector('.preset-chip[data-preset=""]')?.classList.add('active');
+        }
+
+        // Enter key adds tag
+        tagInner.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const val = tagInner.value.trim();
+                if (val && !_tags.includes(val)) {
+                    _tags.push(val);
+                    saveTags();
+                    renderTags();
+                    syncPresetHighlight();
+                }
+                tagInner.value = '';
+            } else if (e.key === 'Backspace' && tagInner.value === '' && _tags.length) {
+                _tags.pop();
+                saveTags();
+                renderTags();
+                syncPresetHighlight();
+            }
+        });
+
+        // Preset chips
+        document.querySelectorAll('.preset-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const preset = chip.dataset.preset;
+                setTags(preset ? preset.split(',').map(s => s.trim()) : []);
+                syncPresetHighlight();
+            });
+        });
         const SERVER_LAST_TASK = "{{ last_task_id | default('') }}";
         const BASE_PATH = "{{ request.scope.get('root_path','') }}";
 
@@ -670,11 +878,13 @@
 
             const beam = parseInt($('beam').value || '5', 10);
             const language = $('language').value;
+            const initial_prompt = getInitialPrompt();
 
             const fd = new FormData();
             fd.append('file', f);
             fd.append('beam_size', String(beam));
             fd.append('language', language);
+            fd.append('initial_prompt', initial_prompt);
 
             $('btn').disabled = true;
             setBusy(true, '');

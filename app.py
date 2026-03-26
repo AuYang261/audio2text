@@ -156,13 +156,19 @@ def transcribe_file(
     audio_path: str,
     beam_size: int = 5,
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
     task_id: Optional[str] = None,
 ) -> dict:
 
     model = get_model()
     _touch_model_last_used()
 
-    segments, info = model.transcribe(audio_path, beam_size=beam_size, language=language or None)
+    segments, info = model.transcribe(
+        audio_path,
+        beam_size=beam_size,
+        language=language or None,
+        initial_prompt=initial_prompt or None,
+    )
 
     plain_parts = []
     verbose_lines = []
@@ -256,6 +262,7 @@ async def api_transcribe_async(
     file: UploadFile = File(...),
     beam_size: int = Form(5),
     language: str = Form(""),
+    initial_prompt: str = Form(""),
 ):
     if not get_logged_in_user(request):
         return JSONResponse(status_code=401, content={"error": "未登录"})
@@ -278,7 +285,8 @@ async def api_transcribe_async(
                 st.task_id, status="running", progress=0.0, message="running"
             )
             result = transcribe_file(
-                str(out_path), beam_size=int(beam_size), language=language, task_id=st.task_id
+                str(out_path), beam_size=int(beam_size), language=language,
+                initial_prompt=initial_prompt, task_id=st.task_id,
             )
             progress_finish(st.task_id, result)
         except Exception as e:
@@ -379,6 +387,7 @@ async def api_transcribe(
     file: UploadFile = File(...),
     beam_size: int = Form(5),
     language: str = Form(""),
+    initial_prompt: str = Form(""),
 ):
     # Protect API endpoint as well (not only the page).
     if not get_logged_in_user(request):
@@ -391,7 +400,8 @@ async def api_transcribe(
             shutil.copyfileobj(file.file, f)
 
         try:
-            result = transcribe_file(str(out_path), beam_size=int(beam_size), language=language)
+            result = transcribe_file(str(out_path), beam_size=int(beam_size), language=language,
+                                     initial_prompt=initial_prompt)
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": str(e)})
 
