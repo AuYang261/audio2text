@@ -44,7 +44,7 @@ COMPUTE_TYPE = _env("WHISPER_COMPUTE_TYPE", "float16")
 LAST_TASK_COOKIE = _env("APP_LAST_TASK_COOKIE", "whisper_last_task")
 
 # 空闲多久后自动释放模型（秒）。0 表示禁用。
-MODEL_IDLE_UNLOAD_SECONDS = int(_env("WHISPER_MODEL_IDLE_UNLOAD_SECONDS", "1800"))
+MODEL_IDLE_UNLOAD_SECONDS = int(_env("WHISPER_MODEL_IDLE_UNLOAD_SECONDS", "0"))
 
 app = FastAPI(title="Faster-Whisper Web Demo")
 
@@ -66,12 +66,13 @@ class _StripPrefixMiddleware:
         if scope["type"] in ("http", "websocket"):
             p: str = scope.get("path", "/")
             if p == self._PREFIX or p.startswith(self._PREFIX + "/"):
-                new_path = p[len(self._PREFIX):] or "/"
+                new_path = p[len(self._PREFIX) :] or "/"
                 scope = dict(scope)
                 scope["path"] = new_path
                 scope["raw_path"] = new_path.encode("latin-1")
                 scope["root_path"] = scope.get("root_path", "") + self._PREFIX
         await self._inner(scope, receive, send)
+
 
 _model: Optional[WhisperModel] = None
 _model_lock = threading.Lock()
@@ -285,8 +286,11 @@ async def api_transcribe_async(
                 st.task_id, status="running", progress=0.0, message="running"
             )
             result = transcribe_file(
-                str(out_path), beam_size=int(beam_size), language=language,
-                initial_prompt=initial_prompt, task_id=st.task_id,
+                str(out_path),
+                beam_size=int(beam_size),
+                language=language,
+                initial_prompt=initial_prompt,
+                task_id=st.task_id,
             )
             progress_finish(st.task_id, result)
         except Exception as e:
@@ -400,8 +404,12 @@ async def api_transcribe(
             shutil.copyfileobj(file.file, f)
 
         try:
-            result = transcribe_file(str(out_path), beam_size=int(beam_size), language=language,
-                                     initial_prompt=initial_prompt)
+            result = transcribe_file(
+                str(out_path),
+                beam_size=int(beam_size),
+                language=language,
+                initial_prompt=initial_prompt,
+            )
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": str(e)})
 

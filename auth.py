@@ -10,8 +10,8 @@ def _env(key: str, default: str) -> str:
     return v if v not in (None, "") else default
 
 
-APP_USERNAME = _env("APP_USERNAME", "")
-APP_PASSWORD = _env("APP_PASSWORD", "")
+APP_USERNAME = _env("APP_USERNAME", "").split(",")
+APP_PASSWORD = _env("APP_PASSWORD", "").split(",")
 SESSION_COOKIE_NAME = _env("APP_SESSION_COOKIE", "whisper_session")
 # NOTE: This is a simple demo secret; change it for any real deployment.
 SESSION_SECRET = _env("APP_SESSION_SECRET", "")
@@ -45,10 +45,10 @@ def verify_session_value(value: str) -> Optional[str]:
 
 
 def verify_credentials(username: str, password: str) -> bool:
-    return hmac.compare_digest(username, APP_USERNAME) and hmac.compare_digest(
-        password, APP_PASSWORD
-    )
-
+    for u, p in zip(APP_USERNAME, APP_PASSWORD):
+        if hmac.compare_digest(username, u) and hmac.compare_digest(password, p):
+            return True
+    return False
 
 def get_logged_in_user(request: Request) -> Optional[str]:
     v = request.cookies.get(SESSION_COOKIE_NAME)
