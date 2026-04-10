@@ -99,7 +99,7 @@
             display: grid;
             grid-template-columns: 1.2fr .5fr .5fr auto auto;
             gap: 14px;
-            align-items: end;
+            align-items: stretch;
         }
 
         @media (max-width: 820px) {
@@ -114,8 +114,19 @@
             }
         }
 
+        .field {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
         .field label {
             display: block;
+            min-height: 1.55em;
+        }
+
+        .controls .help {
+            min-height: 2.4em;
         }
 
         label {
@@ -130,6 +141,7 @@
 
         select {
             width: 100%;
+            min-height: 44px;
             box-sizing: border-box;
             padding: 10px 12px;
             border-radius: 12px;
@@ -150,6 +162,7 @@
         input[type="file"],
         input[type="number"] {
             width: 100%;
+            min-height: 44px;
             box-sizing: border-box;
             padding: 10px 12px;
             border-radius: 12px;
@@ -165,6 +178,7 @@
         }
 
         button {
+            /* min-height: 44px; */
             padding: 11px 14px;
             border: 0;
             border-radius: 12px;
@@ -461,7 +475,7 @@
                 <div class="field">
                     <label>beam_size</label>
                     <input id="beam" type="number" min="1" max="20" value="5" />
-                    <div class="help">越大越精确，但也越慢</div>
+                    <div class="help">越大越精确，但也越慢，且可能使开头识别出垃圾</div>
                 </div>
 
                 <div class="field">

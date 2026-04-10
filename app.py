@@ -52,12 +52,18 @@ app = FastAPI(title="Faster-Whisper Web Demo")
 class _StripPrefixMiddleware:
     """Allow the app to be accessed with or without the /audio2text URL prefix.
 
-    - LAN direct:  GET /           → path stays /,        root_path = ""
-    - Cloud proxy: GET /audio2text → path becomes /,      root_path = /audio2text
-    This lets FastAPI generate correct redirect URLs in both environments.
+    Supported cases:
+    - direct access:              GET /                  → path stays /, root_path = ""
+    - prefixed access:            GET /audio2text        → path becomes /, root_path = /audio2text
+    - proxy strips prefix first:  GET /                  → path stays /, root_path = /audio2text
+                                   (detected from forwarded headers)
     """
 
     _PREFIX = "/audio2text"
+    _FORWARDED_PREFIX_HEADER = b"x-forwarded-prefix"
+    _FORWARDED_PROTO_HEADER = b"x-forwarded-proto"
+    _FORWARDED_HOST_HEADER = b"x-forwarded-host"
+    _FORWARDED_FOR_HEADER = b"x-forwarded-for"
 
     def __init__(self, inner):
         self._inner = inner
@@ -65,12 +71,29 @@ class _StripPrefixMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
             p: str = scope.get("path", "/")
+            scope = dict(scope)
+
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            forwarded_prefix = headers.get(self._FORWARDED_PREFIX_HEADER, b"").decode("latin-1").rstrip("/")
+            is_forwarded = any(
+                headers.get(h)
+                for h in (
+                    self._FORWARDED_PROTO_HEADER,
+                    self._FORWARDED_HOST_HEADER,
+                    self._FORWARDED_FOR_HEADER,
+                )
+            )
+
             if p == self._PREFIX or p.startswith(self._PREFIX + "/"):
                 new_path = p[len(self._PREFIX) :] or "/"
-                scope = dict(scope)
                 scope["path"] = new_path
                 scope["raw_path"] = new_path.encode("latin-1")
-                scope["root_path"] = scope.get("root_path", "") + self._PREFIX
+                scope["root_path"] = self._PREFIX
+            elif not scope.get("root_path") and (
+                forwarded_prefix == self._PREFIX or (not forwarded_prefix and is_forwarded)
+            ):
+                scope["root_path"] = self._PREFIX
+
         await self._inner(scope, receive, send)
 
 
