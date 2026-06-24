@@ -797,7 +797,7 @@
             if (!taskId) return;
             setBusy(true, taskId);
 
-            // 让“识别语言：…”这行在转写开始就出现（先占位，完成后填真实值）。
+            // 让”识别语言：…”这行在转写开始就出现（先占位，完成后填真实值）。
             setMetaLine({});
 
             while (true) {
@@ -816,7 +816,14 @@
                 }
 
                 const pct = Math.round((st.progress || 0) * 100);
-                setProgress(pct, `转写中… ${pct}%`);
+
+                // Show appropriate message for each status
+                if (st.status === 'awaiting_upload') {
+                    $('status').textContent = st.message || '等待文件上传…';
+                    $('progress').value = 0;
+                } else if (st.status === 'running' || st.status === 'queued') {
+                    setProgress(pct, `转写中… ${pct}%`);
+                }
 
                 // 后端可能会在 running 阶段就写入 language 等 meta，及时刷新这一行。
                 if (st.result) {
@@ -894,36 +901,52 @@
             const language = $('language').value;
             const initial_prompt = getInitialPrompt();
 
-            const fd = new FormData();
-            fd.append('file', f);
-            fd.append('beam_size', String(beam));
-            fd.append('language', language);
-            fd.append('initial_prompt', initial_prompt);
-
             $('btn').disabled = true;
             setBusy(true, '');
-            $('status').textContent = '上传中…';
-            setProgress(0, '上传中… 0%');
 
             try {
-                // 1) Create async task
-                const { data } = await uploadWithProgress(`${BASE_PATH}/api/transcribe_async`, fd, (pct) => {
-                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使显示100%也请稍等）`);
+                // ── Phase 1: create task (fast – no file) ──────────────────
+                $('status').textContent = '正在创建任务…';
+                const createResp = await fetch(`${BASE_PATH}/api/transcribe_async`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        beam_size: beam,
+                        language: language,
+                        initial_prompt: initial_prompt,
+                    }),
                 });
-
-                const taskId = data.task_id;
+                if (createResp.status === 401) {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (!createResp.ok) {
+                    const err = await createResp.json().catch(() => ({}));
+                    $('error').textContent = err.error || ('创建任务失败，HTTP ' + createResp.status);
+                    return;
+                }
+                const createData = await createResp.json();
+                const taskId = createData.task_id;
                 if (!taskId) {
                     $('error').textContent = '未获取到任务ID';
                     return;
                 }
 
-                // Ensure upload reaches 100% before switching to transcribe progress
-                setProgress(100, '上传完成，准备转写…');
-
-                // Save for refresh restore
                 localStorage.setItem('whisper_last_task', taskId);
 
-                // 2) Poll progress
+                // ── Phase 2: upload file ───────────────────────────────────
+                $('status').textContent = '上传中…';
+                setProgress(0, '上传中… 0%');
+                const fd = new FormData();
+                fd.append('file', f);
+
+                await uploadWithProgress(`${BASE_PATH}/api/upload/${taskId}`, fd, (pct) => {
+                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使显示100%也请稍等）`);
+                });
+
+                setProgress(100, '上传完成，准备转写…');
+
+                // ── Phase 3: poll ──────────────────────────────────────────
                 await pollTask(taskId);
             } catch (e) {
                 if (e && e.kind === 'auth') {
@@ -937,7 +960,6 @@
                 }
                 $('error').textContent = '上传失败：' + String(e?.kind || e);
             } finally {
-                // pollTask will re-enable when done/error; but ensure not stuck if upload failed early
                 if ($('cancel').dataset.taskId === '') {
                     setBusy(false, '');
                 }

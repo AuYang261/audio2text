@@ -9,11 +9,12 @@ from typing import Dict, Optional
 class ProgressState:
     task_id: str
     created_at: float
-    status: str  # queued|running|done|error
+    status: str  # queued|awaiting_upload|running|done|error
     progress: float  # 0..1
     message: str
     result: Optional[dict] = None
     canceled: bool = False
+    params: Optional[dict] = None  # beam_size, language, initial_prompt, filename
 
 
 _lock = threading.Lock()

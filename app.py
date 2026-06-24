@@ -281,53 +281,31 @@ async def api_task_cancel(request: Request, task_id: str):
 
 
 @app.post("/api/transcribe_async")
-async def api_transcribe_async(
-    request: Request,
-    file: UploadFile = File(...),
-    beam_size: int = Form(5),
-    language: str = Form(""),
-    initial_prompt: str = Form(""),
-):
+async def api_transcribe_async(request: Request):
+    """Phase 1 – create a transcription task (no file).  Returns immediately."""
     if not get_logged_in_user(request):
         return JSONResponse(status_code=401, content={"error": "未登录"})
 
     progress_cleanup()
 
-    suffix = Path(file.filename or "audio").suffix
+    # Parse optional parameters from JSON body --------------------------------
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    beam_size = int(payload.get("beam_size", 5))
+    language = str(payload.get("language", "")).strip()
+    initial_prompt = str(payload.get("initial_prompt", "")).strip()
+
     st = progress_new_task()
-    progress_update(st.task_id, message="uploading")
-
-    # We keep the uploaded file in a temp dir that survives until the background thread finishes.
-    td = tempfile.TemporaryDirectory(prefix="whisper_upload_")
-    out_path = Path(td.name) / f"upload{suffix}"
-    with out_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    def _worker():
-        try:
-            progress_update(
-                st.task_id, status="running", progress=0.0, message="running"
-            )
-            result = transcribe_file(
-                str(out_path),
-                beam_size=int(beam_size),
-                language=language,
-                initial_prompt=initial_prompt,
-                task_id=st.task_id,
-            )
-            progress_finish(st.task_id, result)
-        except Exception as e:
-            progress_fail(st.task_id, str(e))
-        finally:
-            try:
-                td.cleanup()
-            except Exception:
-                pass
-
-    threading.Thread(target=_worker, daemon=True).start()
+    st.params = {
+        "beam_size": beam_size,
+        "language": language,
+        "initial_prompt": initial_prompt,
+    }
+    progress_update(st.task_id, status="awaiting_upload", message="等待文件上传…")
 
     resp = JSONResponse(content={"task_id": st.task_id})
-    # Save last task id so page refresh can restore results.
     resp.set_cookie(
         key=LAST_TASK_COOKIE,
         value=st.task_id,
@@ -335,6 +313,57 @@ async def api_transcribe_async(
         samesite="lax",
     )
     return resp
+
+
+@app.post("/api/upload/{task_id}")
+async def api_upload(
+    request: Request,
+    task_id: str,
+    file: UploadFile = File(...),
+):
+    """Phase 2 – upload the audio file for an existing task and start transcription."""
+    if not get_logged_in_user(request):
+        return JSONResponse(status_code=401, content={"error": "未登录"})
+
+    st = progress_get_task(task_id)
+    if st is None:
+        return JSONResponse(status_code=404, content={"error": "任务不存在或已过期"})
+
+    params = st.params or {}
+    beam_size = int(params.get("beam_size", 5))
+    language = params.get("language") or None
+    initial_prompt = params.get("initial_prompt") or None
+
+    # Save the uploaded file --------------------------------------------------
+    suffix = Path(file.filename or "audio").suffix
+    td = tempfile.TemporaryDirectory(prefix="whisper_upload_")
+    out_path = Path(td.name) / f"upload{suffix}"
+    with out_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    def _worker() -> None:
+        try:
+            progress_update(
+                task_id, status="running", progress=0.0, message="running"
+            )
+            result = transcribe_file(
+                str(out_path),
+                beam_size=beam_size,
+                language=language,
+                initial_prompt=initial_prompt,
+                task_id=task_id,
+            )
+            progress_finish(task_id, result)
+        except Exception as e:
+            progress_fail(task_id, str(e))
+        finally:
+            try:
+                td.cleanup()
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True}
 
 
 @app.get("/api/me")
