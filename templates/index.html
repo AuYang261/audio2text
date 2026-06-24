@@ -758,6 +758,19 @@
             return new Promise((r) => setTimeout(r, ms));
         }
 
+        function formatSize(bytes) {
+            if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+            if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+            if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + ' KB';
+            return bytes + ' B';
+        }
+
+        function formatDuration(sec) {
+            if (sec >= 3600) return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+            if (sec >= 60) return Math.floor(sec / 60) + '分 ' + Math.floor(sec % 60) + '秒';
+            return Math.ceil(sec) + '秒';
+        }
+
         function setProgress(pct, msg) {
             const bar = $('progress');
             bar.classList.remove('hidden');
@@ -802,8 +815,18 @@
 
             while (true) {
                 await sleep(600);
-                const stResp = await fetch(`${BASE_PATH}/api/task/${taskId}`);
-                const st = await stResp.json();
+                let stResp, st;
+                try {
+                    stResp = await fetch(`${BASE_PATH}/api/task/${taskId}`);
+                    st = await stResp.json();
+                } catch (_e) {
+                    // Server unreachable (crashed, network down, etc.)
+                    $('error').textContent = '服务器连接中断，转写状态未知，请检查服务器后刷新页面。';
+                    $('status').textContent = '连接中断';
+                    $('progress').classList.add('hidden');
+                    setBusy(false, '');
+                    break;
+                }
                 if (stResp.status === 401) {
                     location.href = `${BASE_PATH}/login`;
                     return;
@@ -815,13 +838,21 @@
                     return;
                 }
 
-                const pct = Math.round((st.progress || 0) * 100);
-
                 // Show appropriate message for each status
                 if (st.status === 'awaiting_upload') {
-                    $('status').textContent = st.message || '等待文件上传…';
+                    // Upload was interrupted (e.g. page refresh mid-upload).
+                    // Cancel the stale task and let the user start fresh.
+                    $('status').textContent = '上次上传未完成，请重新选择文件上传';
+                    $('error').textContent = '上一次上传中断，任务已取消，请重新上传。';
                     $('progress').value = 0;
+                    $('progress').classList.add('hidden');
+                    setBusy(false, '');
+                    // Silently cancel the abandoned task on the server.
+                    fetch(`${BASE_PATH}/api/task/${taskId}/cancel`, { method: 'POST' }).catch(() => {});
+                    localStorage.removeItem('whisper_last_task');
+                    break;
                 } else if (st.status === 'running' || st.status === 'queued') {
+                    const pct = Math.round((st.progress || 0) * 100);
                     setProgress(pct, `转写中… ${pct}%`);
                 }
 
@@ -914,6 +945,7 @@
                         beam_size: beam,
                         language: language,
                         initial_prompt: initial_prompt,
+                        filename: f.name,
                     }),
                 });
                 if (createResp.status === 401) {
@@ -934,19 +966,93 @@
 
                 localStorage.setItem('whisper_last_task', taskId);
 
-                // ── Phase 2: upload file ───────────────────────────────────
+                // ── Phase 2: upload file in chunks ─────────────────────────
                 $('status').textContent = '上传中…';
-                setProgress(0, '上传中… 0%');
-                const fd = new FormData();
-                fd.append('file', f);
+                setProgress(0, `文件大小 ${formatSize(f.size)}，开始上传…`);
 
-                await uploadWithProgress(`${BASE_PATH}/api/upload/${taskId}`, fd, (pct) => {
-                    setProgress(Math.min(99, pct), `上传中… ${pct}%（即使显示100%也请稍等）`);
-                });
+                const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MiB per chunk
+                const totalChunks = Math.ceil(f.size / CHUNK_SIZE);
+                const uploadStartTime = Date.now();
+                let uploadedBytes = 0;
+
+                for (let i = 0; i < totalChunks; i++) {
+                    $('cancel').dataset.taskId = taskId; // allow cancel during upload
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, f.size);
+                    const blob = f.slice(start, end);
+                    const chunkSize = blob.size;
+
+                    const fd = new FormData();
+                    fd.append('file', blob, f.name);
+                    fd.append('chunk', String(i));
+
+                    // Retry up to 3 times per chunk
+                    let lastErr = null;
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        try {
+                            await uploadWithProgress(
+                                `${BASE_PATH}/api/upload_chunk/${taskId}`,
+                                fd,
+                                (pct) => {
+                                    const currentChunkBytes = Math.round((pct / 100) * chunkSize);
+                                    const totalDone = uploadedBytes + currentChunkBytes;
+                                    const elapsed = Math.max(0.001, (Date.now() - uploadStartTime) / 1000);
+                                    const speed = totalDone / elapsed; // bytes per second
+                                    const remaining = f.size - totalDone;
+                                    const eta = speed > 0 ? remaining / speed : 0;
+                                    const overall = Math.round((totalDone / f.size) * 100);
+
+                                    let msg = `${formatSize(totalDone)} / ${formatSize(f.size)}`;
+                                    if (speed >= 1e6) {
+                                        msg += ` | ${(speed / 1e6).toFixed(1)} MB/s`;
+                                    } else if (speed >= 1e3) {
+                                        msg += ` | ${(speed / 1e3).toFixed(0)} KB/s`;
+                                    }
+                                    msg += ` | 预计剩余 ${formatDuration(eta)}`;
+                                    msg += ` | 块 ${i + 1}/${totalChunks}`;
+                                    setProgress(overall, msg);
+                                }
+                            );
+                            uploadedBytes += chunkSize;
+                            lastErr = null;
+                            break;
+                        } catch (e) {
+                            lastErr = e;
+                            if (attempt < 2) {
+                                await sleep(1000 * (attempt + 1)); // backoff: 1s, 2s
+                            }
+                        }
+                    }
+                    if (lastErr) {
+                        if (lastErr.kind === 'auth') {
+                            location.href = `${BASE_PATH}/login`;
+                            return;
+                        }
+                        throw lastErr;
+                    }
+                }
+
+                // ── Phase 3: finalize (assemble + start transcribe) ────────
+                const totalElapsed = (Date.now() - uploadStartTime) / 1000;
+                const avgSpeed = f.size / Math.max(0.001, totalElapsed);
+                const speedStr = avgSpeed >= 1e6
+                    ? (avgSpeed / 1e6).toFixed(1) + ' MB/s'
+                    : (avgSpeed / 1e3).toFixed(0) + ' KB/s';
+                setProgress(100, `上传完成（${formatSize(f.size)}，${speedStr}），正在组装文件…`);
+                const doneResp = await fetch(`${BASE_PATH}/api/upload_done/${taskId}`, { method: 'POST' });
+                if (doneResp.status === 401) {
+                    location.href = `${BASE_PATH}/login`;
+                    return;
+                }
+                if (!doneResp.ok) {
+                    const err = await doneResp.json().catch(() => ({}));
+                    $('error').textContent = err.error || ('组装文件失败，HTTP ' + doneResp.status);
+                    return;
+                }
 
                 setProgress(100, '上传完成，准备转写…');
 
-                // ── Phase 3: poll ──────────────────────────────────────────
+                // ── Phase 4: poll ──────────────────────────────────────────
                 await pollTask(taskId);
             } catch (e) {
                 if (e && e.kind === 'auth') {
@@ -958,7 +1064,15 @@
                     $('error').textContent = msg;
                     return;
                 }
-                $('error').textContent = '上传失败：' + String(e?.kind || e);
+                if (e && e.kind === 'network') {
+                    $('error').textContent = '网络错误：无法连接服务器，请检查网络或服务器状态后重试。';
+                    return;
+                }
+                if (e && e.kind === 'abort') {
+                    $('error').textContent = '上传已取消。';
+                    return;
+                }
+                $('error').textContent = '操作失败：' + (e?.message || String(e));
             } finally {
                 if ($('cancel').dataset.taskId === '') {
                     setBusy(false, '');

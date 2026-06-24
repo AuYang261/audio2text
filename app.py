@@ -296,12 +296,17 @@ async def api_transcribe_async(request: Request):
     beam_size = int(payload.get("beam_size", 5))
     language = str(payload.get("language", "")).strip()
     initial_prompt = str(payload.get("initial_prompt", "")).strip()
+    filename = str(payload.get("filename", "")).strip()
 
+    upload_dir = tempfile.mkdtemp(prefix="whisper_upload_")
     st = progress_new_task()
     st.params = {
         "beam_size": beam_size,
         "language": language,
         "initial_prompt": initial_prompt,
+        "filename": filename,
+        "upload_dir": upload_dir,
+        "chunks_received": [],
     }
     progress_update(st.task_id, status="awaiting_upload", message="等待文件上传…")
 
@@ -315,13 +320,45 @@ async def api_transcribe_async(request: Request):
     return resp
 
 
-@app.post("/api/upload/{task_id}")
-async def api_upload(
+@app.post("/api/upload_chunk/{task_id}")
+async def api_upload_chunk(
     request: Request,
     task_id: str,
+    chunk: int = Form(0),
     file: UploadFile = File(...),
 ):
-    """Phase 2 – upload the audio file for an existing task and start transcription."""
+    """Phase 2 – upload one chunk of the audio file."""
+    if not get_logged_in_user(request):
+        return JSONResponse(status_code=401, content={"error": "未登录"})
+
+    st = progress_get_task(task_id)
+    if st is None:
+        return JSONResponse(status_code=404, content={"error": "任务不存在或已过期"})
+    if getattr(st, "canceled", False):
+        return JSONResponse(status_code=400, content={"error": "任务已取消"})
+
+    upload_dir = (st.params or {}).get("upload_dir")
+    if not upload_dir:
+        return JSONResponse(status_code=400, content={"error": "任务未初始化上传目录"})
+
+    chunk_path = os.path.join(upload_dir, f"chunk_{chunk:06d}")
+    with open(chunk_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    if st.params is not None:
+        st.params.setdefault("chunks_received", []).append(chunk)
+
+    progress_update(
+        task_id,
+        status="awaiting_upload",
+        message=f"已接收 chunk {chunk}",
+    )
+    return {"ok": True, "chunk": chunk}
+
+
+@app.post("/api/upload_done/{task_id}")
+async def api_upload_done(request: Request, task_id: str):
+    """Phase 3 – all chunks uploaded; assemble file and start transcription."""
     if not get_logged_in_user(request):
         return JSONResponse(status_code=401, content={"error": "未登录"})
 
@@ -330,16 +367,33 @@ async def api_upload(
         return JSONResponse(status_code=404, content={"error": "任务不存在或已过期"})
 
     params = st.params or {}
+    upload_dir = params.get("upload_dir")
+    if not upload_dir:
+        return JSONResponse(status_code=400, content={"error": "上传目录不存在"})
+
     beam_size = int(params.get("beam_size", 5))
     language = params.get("language") or None
     initial_prompt = params.get("initial_prompt") or None
+    original_filename = params.get("filename", "audio")
 
-    # Save the uploaded file --------------------------------------------------
-    suffix = Path(file.filename or "audio").suffix
-    td = tempfile.TemporaryDirectory(prefix="whisper_upload_")
-    out_path = Path(td.name) / f"upload{suffix}"
-    with out_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
+    suffix = Path(original_filename).suffix
+    out_path = os.path.join(upload_dir, f"upload{suffix}")
+
+    # Assemble chunks in order --------------------------------------------------
+    chunks_received = sorted(params.get("chunks_received", []))
+    if not chunks_received:
+        return JSONResponse(status_code=400, content={"error": "未收到任何文件块"})
+
+    with open(out_path, "wb") as outf:
+        for i in chunks_received:
+            chunk_path = os.path.join(upload_dir, f"chunk_{i:06d}")
+            with open(chunk_path, "rb") as inf:
+                shutil.copyfileobj(inf, outf)
+            # Free disk space early
+            try:
+                os.unlink(chunk_path)
+            except Exception:
+                pass
 
     def _worker() -> None:
         try:
@@ -347,7 +401,7 @@ async def api_upload(
                 task_id, status="running", progress=0.0, message="running"
             )
             result = transcribe_file(
-                str(out_path),
+                out_path,
                 beam_size=beam_size,
                 language=language,
                 initial_prompt=initial_prompt,
@@ -358,7 +412,7 @@ async def api_upload(
             progress_fail(task_id, str(e))
         finally:
             try:
-                td.cleanup()
+                shutil.rmtree(upload_dir, ignore_errors=True)
             except Exception:
                 pass
 
