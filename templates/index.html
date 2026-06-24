@@ -966,69 +966,83 @@
 
                 localStorage.setItem('whisper_last_task', taskId);
 
-                // ── Phase 2: upload file in chunks ─────────────────────────
+                // ── Phase 2: upload file in chunks (parallel) ──────────────
                 $('status').textContent = '上传中…';
                 setProgress(0, `文件大小 ${formatSize(f.size)}，开始上传…`);
 
-                const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MiB per chunk
+                const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MiB per chunk
+                const PARALLEL = 2;                  // concurrent uploads
                 const totalChunks = Math.ceil(f.size / CHUNK_SIZE);
-                const uploadStartTime = Date.now();
-                let uploadedBytes = 0;
 
+                // Pre-compute chunk sizes for progress tracking
+                const chunkSizes = [];
                 for (let i = 0; i < totalChunks; i++) {
-                    $('cancel').dataset.taskId = taskId; // allow cancel during upload
+                    const s = i * CHUNK_SIZE;
+                    chunkSizes.push(Math.min(s + CHUNK_SIZE, f.size) - s);
+                }
+                const chunkDone = new Array(totalChunks).fill(0); // bytes uploaded per chunk
+                const uploadStartTime = Date.now();
+
+                function calcStats() {
+                    let totalDone = 0;
+                    for (let i = 0; i < totalChunks; i++) totalDone += chunkDone[i];
+                    const elapsed = Math.max(0.001, (Date.now() - uploadStartTime) / 1000);
+                    const speed = totalDone / elapsed;
+                    const remaining = f.size - totalDone;
+                    const eta = speed > 0 ? remaining / speed : 0;
+                    const overall = Math.round((totalDone / f.size) * 100);
+                    let msg = `${formatSize(totalDone)} / ${formatSize(f.size)}`;
+                    if (speed >= 1e6) msg += ` | ${(speed / 1e6).toFixed(1)} MB/s`;
+                    else if (speed >= 1e3) msg += ` | ${(speed / 1e3).toFixed(0)} KB/s`;
+                    msg += ` | 剩余 ${formatDuration(eta)} | 并发 ${PARALLEL}`;
+                    setProgress(overall, msg);
+                }
+
+                async function uploadOneChunk(i) {
+                    $('cancel').dataset.taskId = taskId;
                     const start = i * CHUNK_SIZE;
                     const end = Math.min(start + CHUNK_SIZE, f.size);
                     const blob = f.slice(start, end);
-                    const chunkSize = blob.size;
-
                     const fd = new FormData();
                     fd.append('file', blob, f.name);
                     fd.append('chunk', String(i));
 
-                    // Retry up to 3 times per chunk
-                    let lastErr = null;
                     for (let attempt = 0; attempt < 3; attempt++) {
                         try {
                             await uploadWithProgress(
                                 `${BASE_PATH}/api/upload_chunk/${taskId}`,
                                 fd,
                                 (pct) => {
-                                    const currentChunkBytes = Math.round((pct / 100) * chunkSize);
-                                    const totalDone = uploadedBytes + currentChunkBytes;
-                                    const elapsed = Math.max(0.001, (Date.now() - uploadStartTime) / 1000);
-                                    const speed = totalDone / elapsed; // bytes per second
-                                    const remaining = f.size - totalDone;
-                                    const eta = speed > 0 ? remaining / speed : 0;
-                                    const overall = Math.round((totalDone / f.size) * 100);
-
-                                    let msg = `${formatSize(totalDone)} / ${formatSize(f.size)}`;
-                                    if (speed >= 1e6) {
-                                        msg += ` | ${(speed / 1e6).toFixed(1)} MB/s`;
-                                    } else if (speed >= 1e3) {
-                                        msg += ` | ${(speed / 1e3).toFixed(0)} KB/s`;
-                                    }
-                                    msg += ` | 预计剩余 ${formatDuration(eta)}`;
-                                    msg += ` | 块 ${i + 1}/${totalChunks}`;
-                                    setProgress(overall, msg);
+                                    chunkDone[i] = Math.round((pct / 100) * chunkSizes[i]);
+                                    calcStats();
                                 }
                             );
-                            uploadedBytes += chunkSize;
-                            lastErr = null;
-                            break;
+                            chunkDone[i] = chunkSizes[i];
+                            calcStats();
+                            return;
                         } catch (e) {
-                            lastErr = e;
-                            if (attempt < 2) {
-                                await sleep(1000 * (attempt + 1)); // backoff: 1s, 2s
-                            }
+                            if (e && e.kind === 'auth') throw e;
+                            if (attempt < 2) await sleep(1000 * (attempt + 1));
+                            else throw e;
                         }
                     }
-                    if (lastErr) {
-                        if (lastErr.kind === 'auth') {
-                            location.href = `${BASE_PATH}/login`;
-                            return;
+                }
+
+                // Upload in parallel batches
+                for (let i = 0; i < totalChunks; i += PARALLEL) {
+                    const batch = [];
+                    for (let j = i; j < Math.min(i + PARALLEL, totalChunks); j++) {
+                        batch.push(uploadOneChunk(j));
+                    }
+                    const results = await Promise.allSettled(batch);
+                    for (const r of results) {
+                        if (r.status === 'rejected') {
+                            if (r.reason && r.reason.kind === 'auth') {
+                                location.href = `${BASE_PATH}/login`;
+                                return;
+                            }
+                            throw r.reason;
                         }
-                        throw lastErr;
                     }
                 }
 
