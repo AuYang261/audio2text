@@ -66,14 +66,14 @@ export APP_SESSION_SECRET="please-change-to-a-long-random-string"
 ## 使用说明（网页）
 
 1. 打开页面并登录
-2. 选择音频/视频文件，设置 `beam_size`
-3. 点击“上传并转写”
-4. 页面会轮询任务进度，并显示：
+2. 选择音频/视频文件，设置 `beam_size`、语言、领域关键词
+3. 点击”上传并转写”——文件自动分块上传（5MB/块），显示实时速度/进度/预估剩余时间
+4. 上传完成后进入转写阶段，页面轮询任务进度，显示：
    - 识别语言/概率/时长
    - 转写文本
    - 分段时间戳结果
-5. 转写过程中可点击“终止当前转写”
-6. 刷新页面会尝试恢复上一次任务结果（服务未重启 + 任务未过期时）
+5. 转写过程中可点击”终止当前转写”
+6. 刷新页面会尝试恢复上一次任务结果；若上次上传未完成则自动取消旧任务
 
 ## 部署：公网云服务器（宝塔）+ 内网算力机（audio2text）的 frp 转发
 
@@ -140,25 +140,29 @@ location ^~ /audio2text/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
-    client_max_body_size 1024m;
-    proxy_connect_timeout 600s;
-    proxy_send_timeout 600s;
-    proxy_read_timeout 600s;
+    client_max_body_size 4096m;
+    proxy_connect_timeout 6000s;
+    proxy_send_timeout 6000s;
+    proxy_read_timeout 6000s;
+    proxy_buffering off;
+    client_body_timeout 6000s;
+    proxy_request_buffering off;
 }
 ```
 
 ### 常见排错
 
 - 宝塔报 502 且日志含 `connect() failed (111: Connection refused)`：
+
   - 说明 Nginx 连接不上 upstream（例如 `127.0.0.1:18000` 没有监听）
   - 先在云服务器 A 上 `ss -ltnp | grep 18000`，确认 frps 是否在监听
   - 再看 frps/frpc 日志是否已建立 proxy
-
 - 访问 `/audio2text/` 跳转到 `/login`（不带前缀）导致 404：
+
   - 多半是后端重定向写死 `/login` 或未设置 `--root-path /audio2text`
   - 本项目已修复重定向，并建议始终使用 `--root-path /audio2text`
-
 - 上传时报 `413 Content Too Large`：
+
   - 这是 Nginx/宝塔限制了上传体积（不是 FastAPI 报错）
   - 在对应 `location` 或 `server` 中增大限制，例如：
 
@@ -181,37 +185,45 @@ client_max_body_size 1024m;
 
 ### 页面
 
-- `GET /`：主页面（未登录会重定向到 `/login`，支持子路径部署）
+- `GET /`：主页面（未登录会重定向到 `/login`）
 - `GET /login`：登录页
 
 ### 登录
 
 - `POST /api/login`：JSON `{username, password}`
 - `POST /api/logout`
+- `GET /api/me`：返回当前登录用户及上次任务 ID
 
-### 异步转写（网页使用）
+### 异步转写（网页使用，三阶段）
+
+**Phase 1 — 创建任务（秒返）**
 
 - `POST /api/transcribe_async`
-  - form-data:
-    - `file`
-    - `beam_size`（默认 5）
+  - JSON body: `{ beam_size, language, initial_prompt, filename }`
   - 返回：`{ task_id }`
 
-- `GET /api/task/{task_id}`
-  - 返回：`{ status, progress, message, result? }`
-  - 说明：后端会尽早把 `result.language` 等信息写入任务，因此 **running 阶段也可能返回 result**。
+**Phase 2 — 分块上传**
 
-- `POST /api/task/{task_id}/cancel`：终止任务（协作式取消）
+- `POST /api/upload_chunk/{task_id}`
+
+  - form-data: `file`（单个 5MB 分块）, `chunk`（块序号）
+  - 返回：`{ ok, chunk }`
+- `POST /api/upload_done/{task_id}`
+
+  - 无 body
+  - 组装所有分块 → 启动后台转写线程 → 返回 `{ ok }`
+
+**Phase 3 — 轮询**
+
+- `GET /api/task/{task_id}`
+
+  - 返回：`{ task_id, status, progress, message, result? }`
+  - status: `queued` → `awaiting_upload` → `running` → `done` / `error`
+  - running 阶段会尽早写入 `result.language` 等 meta 信息
+- `POST /api/task/{task_id}/cancel`：终止转写（协作式取消）
 
 ### 同步转写（保留接口）
 
 - `POST /api/transcribe`
-  - form-data:
-    - `file`: 上传文件
-    - `beam_size`: 可选，默认 5
-
-响应 JSON：
-
-- `text`: 拼接后的文本
-- `segments`: 带时间戳的行列表
-- `language`, `language_probability`, `duration`, `duration_after_vad`
+  - form-data: `file`, `beam_size`, `language`, `initial_prompt`
+  - 返回：`{ text, segments, language, language_probability, duration, duration_after_vad }`
